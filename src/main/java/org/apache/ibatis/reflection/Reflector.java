@@ -15,6 +15,13 @@
  */
 package org.apache.ibatis.reflection;
 
+import org.apache.ibatis.reflection.invoker.AmbiguousMethodInvoker;
+import org.apache.ibatis.reflection.invoker.GetFieldInvoker;
+import org.apache.ibatis.reflection.invoker.Invoker;
+import org.apache.ibatis.reflection.invoker.MethodInvoker;
+import org.apache.ibatis.reflection.invoker.SetFieldInvoker;
+import org.apache.ibatis.reflection.property.PropertyNamer;
+
 import java.lang.reflect.Array;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
@@ -33,13 +40,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Map.Entry;
-
-import org.apache.ibatis.reflection.invoker.AmbiguousMethodInvoker;
-import org.apache.ibatis.reflection.invoker.GetFieldInvoker;
-import org.apache.ibatis.reflection.invoker.Invoker;
-import org.apache.ibatis.reflection.invoker.MethodInvoker;
-import org.apache.ibatis.reflection.invoker.SetFieldInvoker;
-import org.apache.ibatis.reflection.property.PropertyNamer;
 
 /**
  * This class represents a cached set of class definition information that
@@ -62,12 +62,19 @@ public class Reflector {
 
   public Reflector(Class<?> clazz) {
     type = clazz;
+    // 解析目标类的默认构造方法 无参构造，并赋值给 defaultConstructor 变量
     addDefaultConstructor(clazz);
+    // 解析 getter 方法，并将解析结果放入 getMethods 中
     addGetMethods(clazz);
+    // 解析 setter 方法，并将解析结果放入 setMethods 中
     addSetMethods(clazz);
+    // 解析属性字段，并将解析结果添加到 setMethods 或 getMethods 中
     addFields(clazz);
+    // 从 getMethods 映射中获取可读属性名数组
     readablePropertyNames = getMethods.keySet().toArray(new String[0]);
+    // 从 setMethods 映射中获取可写属性名数组
     writablePropertyNames = setMethods.keySet().toArray(new String[0]);
+    // 将所有属性名的大写形式作为键，属性名作为值，存入到 caseInsensitivePropertyMap 中
     for (String propName : readablePropertyNames) {
       caseInsensitivePropertyMap.put(propName.toUpperCase(Locale.ENGLISH), propName);
     }
@@ -84,9 +91,13 @@ public class Reflector {
 
   private void addGetMethods(Class<?> clazz) {
     Map<String, List<Method>> conflictingGetters = new HashMap<>();
+    // 获取所有方法
     Method[] methods = getClassMethods(clazz);
+    // 从中获取 入参个数为0，get*/is* 的方法 获取属性名*并验证 不是$开头、也不是serialVersionUID、class
+    // 放入map name->List<Method> 该map可能会有冲突 如 getTitle isTitle
     Arrays.stream(methods).filter(m -> m.getParameterTypes().length == 0 && PropertyNamer.isGetter(m.getName()))
       .forEach(m -> addMethodConflict(conflictingGetters, PropertyNamer.methodToProperty(m.getName()), m));
+    // 解决冲突，存入 getMethods getTypes
     resolveGetterConflicts(conflictingGetters);
   }
 
@@ -96,6 +107,7 @@ public class Reflector {
       String propName = entry.getKey();
       boolean isAmbiguous = false;
       for (Method candidate : entry.getValue()) {
+        // 首先获取第一个暂时做为winner 进行比较。
         if (winner == null) {
           winner = candidate;
           continue;
@@ -104,20 +116,29 @@ public class Reflector {
         Class<?> candidateType = candidate.getReturnType();
         if (candidateType.equals(winnerType)) {
           if (!boolean.class.equals(candidateType)) {
+            // 如果两个method返回值相等 并且不是boolean返回值 则标记是模糊的，返回首个method
             isAmbiguous = true;
             break;
           } else if (candidate.getName().startsWith("is")) {
+            // 如果两个method返回值相等 并且是boolean返回值 则选择is开头的，不选get开头的
             winner = candidate;
           }
         } else if (candidateType.isAssignableFrom(winnerType)) {
+          // 优先选子类
+          // winnerType 是 candidateType 的子类，此时认为 winner 方法更为合适，
+          // 则选 winner
           // OK getter type is descendant
         } else if (winnerType.isAssignableFrom(candidateType)) {
+          // 优先选子类
+          // candidateType 是 winnerType 的子类，此时认为 candidate 方法更为合适，
+          // 则选 candidate
           winner = candidate;
         } else {
           isAmbiguous = true;
           break;
         }
       }
+      //放入 getMethods getTypes
       addGetMethod(propName, winner, isAmbiguous);
     }
   }
@@ -129,7 +150,9 @@ public class Reflector {
             name, method.getDeclaringClass().getName()))
         : new MethodInvoker(method);
     getMethods.put(name, invoker);
+    // 解析返回值类型
     Type returnType = TypeParameterResolver.resolveReturnType(method, type);
+    // 将返回值类型由 Type 转为 Class，并将转换后的结果缓存到 setTypes 中
     getTypes.put(name, typeToClass(returnType));
   }
 

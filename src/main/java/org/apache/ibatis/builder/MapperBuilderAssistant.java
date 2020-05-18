@@ -15,16 +15,6 @@
  */
 package org.apache.ibatis.builder;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Properties;
-import java.util.Set;
-import java.util.StringTokenizer;
-
 import org.apache.ibatis.cache.Cache;
 import org.apache.ibatis.cache.decorators.LruCache;
 import org.apache.ibatis.cache.impl.PerpetualCache;
@@ -48,6 +38,16 @@ import org.apache.ibatis.scripting.LanguageDriver;
 import org.apache.ibatis.session.Configuration;
 import org.apache.ibatis.type.JdbcType;
 import org.apache.ibatis.type.TypeHandler;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Properties;
+import java.util.Set;
+import java.util.StringTokenizer;
 
 /**
  * @author Clinton Begin
@@ -109,10 +109,19 @@ public class MapperBuilderAssistant extends BaseBuilder {
     }
     try {
       unresolvedCacheRef = true;
+      // 根据命名空间从全局配置对象（Configuration）中查找相应的缓存实例
       Cache cache = configuration.getCache(namespace);
+      /*
+       * 若未查找到缓存实例，此处抛出异常。这里存在两种情况导致未查找到 cache 实例，
+       * 分别如下：
+       *     1.使用者在 <cache-ref> 中配置了一个不存在的命名空间，
+       *       导致无法找到 cache 实例
+       *     2.使用者所引用的缓存实例还未创建
+       */
       if (cache == null) {
         throw new IncompleteElementException("No cache for namespace '" + namespace + "' could be found.");
       }
+      // 设置 cache 为当前使用缓存
       currentCache = cache;
       unresolvedCacheRef = false;
       return cache;
@@ -137,7 +146,9 @@ public class MapperBuilderAssistant extends BaseBuilder {
         .blocking(blocking)
         .properties(props)
         .build();
+    // 添加缓存到 Configuration 对象中
     configuration.addCache(cache);
+    // 设置 currentCache 遍历，即当前使用的缓存
     currentCache = cache;
     return cache;
   }
@@ -180,17 +191,21 @@ public class MapperBuilderAssistant extends BaseBuilder {
       Discriminator discriminator,
       List<ResultMapping> resultMappings,
       Boolean autoMapping) {
+    // 为 ResultMap 的 id 和 extend 属性值拼接命名空间
     id = applyCurrentNamespace(id, false);
     extend = applyCurrentNamespace(extend, true);
 
     if (extend != null) {
+      // 验证继承项是否存在
       if (!configuration.hasResultMap(extend)) {
         throw new IncompleteElementException("Could not find a parent resultmap with id '" + extend + "'");
       }
       ResultMap resultMap = configuration.getResultMap(extend);
       List<ResultMapping> extendedResultMappings = new ArrayList<>(resultMap.getResultMappings());
+      // 为拓展 ResultMappings 去除重复项
       extendedResultMappings.removeAll(resultMappings);
       // Remove parent constructor if this resultMap declares a constructor.
+      // 检测当前 resultMappings 集合中是否包含 CONSTRUCTOR 标志的元素
       boolean declaresConstructor = false;
       for (ResultMapping resultMapping : resultMappings) {
         if (resultMapping.getFlags().contains(ResultFlag.CONSTRUCTOR)) {
@@ -198,11 +213,17 @@ public class MapperBuilderAssistant extends BaseBuilder {
           break;
         }
       }
+      /*
+       * 如果当前 <resultMap> 节点中包含 <constructor> 子节点，
+       * 则将拓展 ResultMapping 集合中的包含 CONSTRUCTOR 标志的元素移除
+       */
       if (declaresConstructor) {
         extendedResultMappings.removeIf(resultMapping -> resultMapping.getFlags().contains(ResultFlag.CONSTRUCTOR));
       }
+      // 将扩展 resultMappings 集合合并到当前 resultMappings 集合中
       resultMappings.addAll(extendedResultMappings);
     }
+    // 构建 ResultMap
     ResultMap resultMap = new ResultMap.Builder(configuration, id, type, resultMappings, autoMapping)
         .discriminator(discriminator)
         .build();
@@ -270,6 +291,7 @@ public class MapperBuilderAssistant extends BaseBuilder {
     id = applyCurrentNamespace(id, false);
     boolean isSelect = sqlCommandType == SqlCommandType.SELECT;
 
+    // 创建建造器，设置各种属性
     MappedStatement.Builder statementBuilder = new MappedStatement.Builder(configuration, id, sqlSource, sqlCommandType)
         .resource(resource)
         .fetchSize(fetchSize)
@@ -288,12 +310,15 @@ public class MapperBuilderAssistant extends BaseBuilder {
         .useCache(valueOrDefault(useCache, isSelect))
         .cache(currentCache);
 
+    // 获取或创建 ParameterMap
     ParameterMap statementParameterMap = getStatementParameterMap(parameterMap, parameterType, id);
     if (statementParameterMap != null) {
       statementBuilder.parameterMap(statementParameterMap);
     }
 
+    // 构建 MappedStatement
     MappedStatement statement = statementBuilder.build();
+    // 添加 MappedStatement 到 configuration 的 mappedStatements 集合中
     configuration.addMappedStatement(statement);
     return statement;
   }
@@ -368,14 +393,26 @@ public class MapperBuilderAssistant extends BaseBuilder {
       String resultSet,
       String foreignColumn,
       boolean lazy) {
+    /*
+     * 若 javaType 为空，这里根据 property 的属性进行解析。关于下面方法中的参数，
+     * 这里说明一下：
+     *   - resultType：即 <resultMap type="xxx"/> 中的 type 属性
+     *   - property：即 <result property="xxx"/> 中的 property 属性
+     */
     Class<?> javaTypeClass = resolveResultJavaType(resultType, property, javaType);
+    // 解析 TypeHandler
     TypeHandler<?> typeHandlerInstance = resolveTypeHandler(javaTypeClass, typeHandler);
     List<ResultMapping> composites;
+    /*
+     * 解析 column = {property1=column1, property2=column2} 的情况，
+     * 这里会将 column 拆分成多个 ResultMapping
+     */
     if ((nestedSelect == null || nestedSelect.isEmpty()) && (foreignColumn == null || foreignColumn.isEmpty())) {
       composites = Collections.emptyList();
     } else {
       composites = parseCompositeColumnName(column);
     }
+    // 通过建造模式构建 ResultMapping
     return new ResultMapping.Builder(configuration, property, column, javaTypeClass)
         .jdbcType(jdbcType)
         .nestedQueryId(applyCurrentNamespace(nestedSelect, true))

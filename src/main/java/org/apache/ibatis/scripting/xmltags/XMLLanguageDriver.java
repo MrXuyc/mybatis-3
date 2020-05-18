@@ -40,7 +40,9 @@ public class XMLLanguageDriver implements LanguageDriver {
 
   @Override
   public SqlSource createSqlSource(Configuration configuration, XNode script, Class<?> parameterType) {
+    // 使用全局配置，解析节点，参数类型构建XMLScriptBuilder 并初始化节点（if where）处理器
     XMLScriptBuilder builder = new XMLScriptBuilder(configuration, script, parameterType);
+    // 处理sql语句 返回SqlSource
     return builder.parseScriptNode();
   }
 
@@ -52,8 +54,11 @@ public class XMLLanguageDriver implements LanguageDriver {
       return createSqlSource(configuration, parser.evalNode("/script"), parameterType);
     } else {
       // issue #127
+      // 解析 SQL 语句节点
       script = PropertyParser.parse(script, configuration.getVariables());
       TextSqlNode textSqlNode = new TextSqlNode(script);
+      // 根据 isDynamic 状态创建不同的 SqlSource
+      // 是否有占位符${}
       if (textSqlNode.isDynamic()) {
         return new DynamicSqlSource(configuration, textSqlNode);
       } else {

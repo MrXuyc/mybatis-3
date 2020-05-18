@@ -15,6 +15,9 @@
  */
 package org.apache.ibatis.type;
 
+import org.apache.ibatis.io.ResolverUtil;
+import org.apache.ibatis.io.Resources;
+
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.sql.ResultSet;
@@ -28,9 +31,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-
-import org.apache.ibatis.io.ResolverUtil;
-import org.apache.ibatis.io.Resources;
 
 /**
  * @author Clinton Begin
@@ -127,12 +127,20 @@ public class TypeAliasRegistry {
 
   public void registerAliases(String packageName, Class<?> superType) {
     ResolverUtil<Class<?>> resolverUtil = new ResolverUtil<>();
+    /*
+     * 查找某个包下的父类为 superType 的类。从调用栈来看，这里的
+     * superType = Object.class，所以 ResolverUtil 将查找所有的类。
+     * 查找完成后，查找结果将会被缓存到内部集合中。
+     */
     resolverUtil.find(new ResolverUtil.IsA(superType), packageName);
+    // 获取查找结果
     Set<Class<? extends Class<?>>> typeSet = resolverUtil.getClasses();
     for (Class<?> type : typeSet) {
       // Ignore inner classes and interfaces (including package-info.java)
       // Skip also inner classes. See issue #6
+      // 忽略匿名类，接口，内部类
       if (!type.isAnonymousClass() && !type.isInterface() && !type.isMemberClass()) {
+        // 为类型注册别名
         registerAlias(type);
       }
     }
